@@ -4,3 +4,30 @@ on: [push, pull_request, workflow_dispatch]
 jobs:
   build:
     uses: zmkfirmware/zmk/.github/workflows/build-user-config.yml@v0.3
+
+  release:
+    name: Publish firmware to Release
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all firmware artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: firmware
+          merge-multiple: true
+      - name: List firmware files
+        run: find firmware -type f -printf '%P  %s bytes\n'
+      - name: Publish / update Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: zmk-studio-firmware
+          name: ZMK Studio firmware (zmk-studio)
+          body: |
+            Auto-built from branch `zmk-studio`.
+
+            - `*-nosd.uf2`: app@0x1000, NO SoftDevice. For Daxiong NICE NANO / boards reporting "SoftDevice: not found". **Use this one for the NoSD board.**
+            - `*-sd.uf2`: app@0x26000, requires S140 SoftDevice (nice!nano v1 / most Pro Micro clones).
+          files: firmware/**/*
