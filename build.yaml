@@ -1,7 +1,17 @@
 # This file generates the GitHub Actions matrix.
 ---
 include:
+  # NoSD layout: application at 0x1000, no SoftDevice. Matches RMK-stock
+  # controllers and nice!nano v2 ("SoftDevice: not found").
+  - board: nice_nano
+    shield: my48
+    snippet: nrf52840-nosd studio-rpc-usb-uart
+    cmake-args: -DCONFIG_ZMK_STUDIO=y
+    artifact-name: my48-nice_nano-nosd
+  # SD layout: application at 0x26000, requires SoftDevice S140. Matches
+  # nice!nano v1 and most Pro Micro clones ("SoftDevice: S140 ...").
   - board: nice_nano
     shield: my48
     snippet: studio-rpc-usb-uart
     cmake-args: -DCONFIG_ZMK_STUDIO=y
+    artifact-name: my48-nice_nano-sd
