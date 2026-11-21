@@ -33,5 +33,16 @@
                 &trans &studio_unlock &trans &none &trans &none &trans &trans &none &none &none &trans
             >;
         };
+
+        // Layers 3-11: reserved for ZMK Studio to configure (mouse keys, etc.)
+        layer_3 { status = "reserved"; display-name = "Layer 4"; };
+        layer_4 { status = "reserved"; display-name = "Layer 5"; };
+        layer_5 { status = "reserved"; display-name = "Layer 6"; };
+        layer_6 { status = "reserved"; display-name = "Layer 7"; };
+        layer_7 { status = "reserved"; display-name = "Layer 8"; };
+        layer_8 { status = "reserved"; display-name = "Layer 9"; };
+        layer_9 { status = "reserved"; display-name = "Layer 10"; };
+        layer_10 { status = "reserved"; display-name = "Layer 11"; };
+        layer_11 { status = "reserved"; display-name = "Layer 12"; };
     };
 };
