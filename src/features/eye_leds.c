@@ -1,4 +1,3 @@
-#error EYE_LEDS_MODULE_IS_COMPILED
 /*
  * Batoid "eye" LEDs for ZMK.
  *
