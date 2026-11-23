@@ -1,0 +1,8 @@
+# Copyright (c) 2026
+# SPDX-License-Identifier: MIT
+
+description: Legacy GPREGRET bootloader entry for Adafruit/Daxiong nRF52 bootloaders
+
+compatible: "zmk,behavior-legacy-bootloader"
+
+include: zero_param.yaml
