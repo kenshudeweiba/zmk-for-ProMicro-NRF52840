@@ -1,18 +1,18 @@
 /*
- * Batoid "eye" LEDs for ZMK.
+ * Batoid "eye" LEDs for ZMK - faithful port of the original QMK firmware
+ * (firmware/kotte/batoid/keymaps/default/keymap.c).
  *
- * Mirrors the original QMK batoid firmware behavior:
- *  - While typing, the eye on the side being typed on lights up
- *    (right-hand keys -> LEFT eye, left-hand keys -> RIGHT eye).
- *  - Fast typing (WPM >= TURBO_WPM) runs a left/right alternating animation.
- *  - After IDLE_MS of no key activity, the LEDs are handed back to the
- *    classic status display: caps lock state + endpoint connection state,
- *    so the two LEDs keep showing caps/connection while idle.
+ * Three modes, exactly like the original:
+ *  - Standard (while typing): mirrored - right-hand keys light the LEFT eye,
+ *    left-hand keys light the RIGHT eye. Keys released -> both off.
+ *  - Turbo (WPM >= 70): left/right eyes alternate every 100 ms, 6-frame loop.
+ *  - Idle (1 s after the last key): both eyes off, except a blink at idle
+ *    frames 21, 51 and 53 of a 300-frame loop at 80 ms/frame (~24 s).
  *
- * The LEDs are the two GPIOs described in the overlay (gpio-leds nodes).
- * We drive them directly with gpio_pin_set_dt(). NOTE: the ZMK
- * `zmk,indicator-leds` node for these two LEDs is intentionally removed from
- * the overlay, because this module becomes the single owner of the pins.
+ * There is deliberately NO caps-lock / connection-status display here, to
+ * match the original QMK behavior.
+ *
+ * GPIOs are GPIO_ACTIVE_LOW (see overlay); gpio_pin_set_dt(...,1) = LED on.
  */
 
 #include <zephyr/kernel.h>
@@ -21,94 +21,135 @@
 #include <zmk/event_manager.h>
 #include <zmk/events/position_state_changed.h>
 #include <zmk/events/wpm_state_changed.h>
-#include <zmk/hid_indicators.h>
-#include <zmk/endpoints.h>
 
-#include <dt-bindings/zmk/hid_indicators.h>
-
-#include <zephyr/logging/log.h>
-LOG_MODULE_REGISTER(eye_leds, CONFIG_LOG_DEFAULT_LEVEL);
-
-/* Build marker: forced into .rodata via a volatile reference in init(),
- * so we can prove this module is linked by searching the final binary. */
-static const char eye_leds_build_tag[] __attribute__((used)) = "BATOID_EYE_LEDS_V1";
-
-/* The two physical LEDs, declared as gpio-leds children in the overlay. */
 #define LED_L_NODE DT_NODELABEL(caps_lock_led)
 #define LED_R_NODE DT_NODELABEL(bt_status_led)
 
 static const struct gpio_dt_spec led_l = GPIO_DT_SPEC_GET(LED_L_NODE, gpios);
 static const struct gpio_dt_spec led_r = GPIO_DT_SPEC_GET(LED_R_NODE, gpios);
 
-#define IDLE_MS      1500  /* stop typing -> back to status display */
-#define TURBO_WPM    70
-#define TICK_MS      50
+#define TURBO_WPM       70
+#define IDLE_MS         1000
+#define TICK_MS         10
+#define IDLE_FRAME_MS   80
+#define TURBO_FRAME_MS  100
+#define IDLE_FRAME_MAX  300
+#define TURBO_FRAME_MAX 6
 
-/* Runtime state */
-static int64_t last_key_ms;
-static bool turbo_mode;
-static bool status_mode = true;   /* true while showing caps/connection */
-static uint8_t turbo_frame;
+/* Build marker, forced into .rodata so the final binary can be verified. */
+static const char eye_leds_build_tag[] __attribute__((used)) = "BATOID_EYE_LEDS_QMK_V2";
 
-/* column index -> side. Batoid matrix is 4x12; col<=5 left hand, col>=6 right. */
-static void set_eyes(bool left_on, bool right_on) {
+static uint8_t current_wpm;
+static int pressed_keys;
+static bool standard_mode = true;
+static bool turbo_playing;
+static bool idle_playing = true;
+
+static int idle_frame;
+static int turbo_frame;
+static int64_t idle_frame_ms;
+static int64_t turbo_frame_ms;
+static int64_t idle_start_at;
+static bool idle_pending;
+
+static int active_eye; /* 0 = left eye, 1 = right eye */
+
+static void set_eyes(bool left_on, bool right_on)
+{
     gpio_pin_set_dt(&led_l, left_on ? 1 : 0);
     gpio_pin_set_dt(&led_r, right_on ? 1 : 0);
 }
 
-/* Classic status display: caps lock on left LED, connection on right LED. */
-static void show_status(void) {
-    bool connected = zmk_endpoint_is_connected();
-    zmk_hid_indicators_t ind = zmk_hid_indicators_get_current_profile();
-    bool caps = connected && (ind & HID_INDICATOR_CAPS_LOCK);
-
-    /* GPIO_ACTIVE_LOW: value 1 == active (LED on) via gpio_pin_set_dt. */
-    gpio_pin_set_dt(&led_l, caps ? 1 : 0);        /* caps lock */
-    gpio_pin_set_dt(&led_r, connected ? 1 : 0);   /* connection */
-}
-
-static void eye_led_tick(struct k_timer *timer) {
+static void eye_led_tick(struct k_timer *timer)
+{
     int64_t now = k_uptime_get();
 
-    if ((now - last_key_ms) >= IDLE_MS) {
-        if (!status_mode) {
-            status_mode = true;
-            turbo_mode = false;
-            show_status();
-        }
-        return;
+    if (idle_pending && now >= idle_start_at) {
+        idle_playing = true;
+        idle_pending = false;
     }
 
-    status_mode = false;
+    if (turbo_playing) {
+        if (now - turbo_frame_ms >= TURBO_FRAME_MS) {
+            turbo_frame_ms = now;
+            turbo_frame = (turbo_frame >= TURBO_FRAME_MAX) ? 1 : turbo_frame + 1;
+        }
+        switch (turbo_frame) {
+        case 1:
+        case 3:
+        case 5:
+            set_eyes(true, false);
+            break;
+        case 2:
+        case 4:
+        case 6:
+            set_eyes(false, true);
+            break;
+        default:
+            set_eyes(false, false);
+            break;
+        }
+    }
 
-    if (turbo_mode) {
-        /* alternate every tick */
-        turbo_frame ^= 1;
-        set_eyes(turbo_frame == 0, turbo_frame == 1);
-    } else {
-        /* hold the eye for the side last typed on (set in the listener) */
-        set_eyes((last_key_ms > 0) && turbo_frame == 0,
-                 (last_key_ms > 0) && turbo_frame == 1);
+    if (idle_playing) {
+        standard_mode = false;
+        turbo_playing = false;
+        if (now - idle_frame_ms >= IDLE_FRAME_MS) {
+            idle_frame_ms = now;
+            idle_frame = (idle_frame >= IDLE_FRAME_MAX) ? 1 : idle_frame + 1;
+        }
+        set_eyes(false, false);
+        if (idle_frame == 21 || idle_frame == 51 || idle_frame == 53) {
+            set_eyes(true, true);
+        }
+    }
+
+    if (standard_mode) {
+        if (pressed_keys > 0) {
+            set_eyes(active_eye == 0, active_eye == 1);
+        } else {
+            set_eyes(false, false);
+        }
     }
 }
 
 K_TIMER_DEFINE(eye_led_timer, eye_led_tick, NULL);
 
-static int eye_led_listener(const zmk_event_t *eh) {
-    if (as_zmk_position_state_changed(eh)) {
-        const struct zmk_position_state_changed *ev = as_zmk_position_state_changed(eh);
-        if (ev->state) {  /* key press */
-            uint32_t col = ev->position % 12;
-            bool right_hand = (col >= 6);
-            /* mirrored, like original batoid: right hand -> left eye */
-            turbo_frame = right_hand ? 0 : 1;
-            last_key_ms = k_uptime_get();
-            status_mode = false;
+static int eye_led_listener(const zmk_event_t *eh)
+{
+    struct zmk_position_state_changed *pos = as_zmk_position_state_changed(eh);
+    if (pos) {
+        if (pos->state) {
+            idle_playing = false;
+            standard_mode = true;
+            uint32_t col = pos->position % 12;
+            active_eye = (col > 5) ? 0 : 1; /* right hand -> left eye */
         }
-    } else if (as_zmk_wpm_state_changed(eh)) {
-        const struct zmk_wpm_state_changed *ev = as_zmk_wpm_state_changed(eh);
-        turbo_mode = (ev->state >= TURBO_WPM);
+        if (current_wpm >= TURBO_WPM) {
+            turbo_playing = true;
+            standard_mode = false;
+            idle_playing = false;
+        }
+        pressed_keys += pos->state ? 1 : -1;
+        if (pressed_keys < 0) {
+            pressed_keys = 0;
+        }
+        idle_pending = true;
+        idle_start_at = k_uptime_get() + IDLE_MS;
+        return ZMK_EV_EVENT_BUBBLE;
     }
+
+    struct zmk_wpm_state_changed *wpm = as_zmk_wpm_state_changed(eh);
+    if (wpm) {
+        current_wpm = wpm->state;
+        if (current_wpm >= TURBO_WPM) {
+            turbo_playing = true;
+            standard_mode = false;
+            idle_playing = false;
+        }
+        return ZMK_EV_EVENT_BUBBLE;
+    }
+
     return ZMK_EV_EVENT_BUBBLE;
 }
 
@@ -116,20 +157,22 @@ ZMK_LISTENER(eye_led, eye_led_listener);
 ZMK_SUBSCRIPTION(eye_led, zmk_position_state_changed);
 ZMK_SUBSCRIPTION(eye_led, zmk_wpm_state_changed);
 
-static int eye_led_init(void) {
-    volatile const char *tag = eye_leds_build_tag;  /* keep marker in binary */
+static int eye_led_init(void)
+{
+    volatile const char *tag = eye_leds_build_tag;
     (void)tag;
 
     if (!device_is_ready(led_l.port) || !device_is_ready(led_r.port)) {
-        LOG_ERR("eye LED GPIO port not ready");
         return -ENODEV;
     }
     gpio_pin_configure_dt(&led_l, GPIO_OUTPUT_INACTIVE);
     gpio_pin_configure_dt(&led_r, GPIO_OUTPUT_INACTIVE);
 
-    /* start in status mode */
-    status_mode = true;
-    show_status();
+    idle_frame_ms = k_uptime_get();
+    turbo_frame_ms = idle_frame_ms;
+    standard_mode = true;
+    idle_playing = true;
+    set_eyes(false, false);
 
     k_timer_start(&eye_led_timer, K_MSEC(TICK_MS), K_MSEC(TICK_MS));
     return 0;

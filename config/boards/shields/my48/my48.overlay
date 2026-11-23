@@ -91,7 +91,7 @@
       , <&key_physical_attrs  100  100  1300  210 (-800)  1350  260> // 2,10
       , <&key_physical_attrs  100  100  1400  200 (-800)  1450  250> // 2,11
       , <&key_physical_attrs  150  100   100  300    800   175  350> // 3,0
-      , <&key_physical_attrs  100  100   200  310    800   250  360> // 3,1
+      , <&key_physical_attrs  100  100   200  210    800   250  260> // 3,1 -> LBRC sits to the left of Z
       , <&key_physical_attrs  125  100   425  319    800   487  369> // 3,2
       , <&key_physical_attrs  125  100   425  329    800   487  379> // 3,3 ghost
       , <&key_physical_attrs  200  100   550  338    800   650  388> // 3,4
