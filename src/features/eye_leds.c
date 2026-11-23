@@ -7,9 +7,9 @@
  *    left-hand keys light the RIGHT eye. Keys released -> both off.
  *  - Turbo (WPM >= 70): left/right eyes alternate every 100 ms, 6-frame loop.
  *  - Idle (1 s after the last key): both eyes off, with an IRREGULAR blink:
- *    random wait (1.2-8 s, occasionally 9-18 s), then 1-3 quick blinks with
- *    a random on-time (70-110 ms) and random gap (80-200 ms). No fixed
- *    schedule and no repeating 24 s loop.
+ *    random wait (1.2-8 s, occasionally 9-18 s), then a slow, human-like
+ *    blink (1-3 times) OR a wink (both eyes on -> one eye closes -> both
+ *    on again). No fixed schedule and no repeating loop.
  *
  * Connection gate: when neither USB nor BLE is connected, both eyes stay dark.
  * All light output goes through set_eyes(), so the gate is applied there.
@@ -41,13 +41,21 @@ static const struct gpio_dt_spec led_r = GPIO_DT_SPEC_GET(LED_R_NODE, gpios);
 #define BLINK_WAIT_MAX  8000
 #define BLINK_LONG_MIN  9000
 #define BLINK_LONG_MAX  18000
-#define BLINK_ON_MIN    70
-#define BLINK_ON_MAX    110
-#define BLINK_GAP_MIN   80
-#define BLINK_GAP_MAX   200
+/* Slowed down to ~160-240 ms so a blink reads as a real, visible blink. */
+#define BLINK_ON_MIN    160
+#define BLINK_ON_MAX    240
+#define BLINK_GAP_MIN   180
+#define BLINK_GAP_MAX   320
+/* Wink timing: both on -> one eye closes -> both on again. */
+#define WINK_BOTH_MIN   160
+#define WINK_BOTH_MAX   240
+#define WINK_HALF_MIN   100
+#define WINK_HALF_MAX   160
+#define WINK_BACK_MIN   120
+#define WINK_BACK_MAX   180
 
 /* Build marker, forced into .rodata so the final binary can be verified. */
-static const char eye_leds_build_tag[] __attribute__((used)) = "BATOID_EYE_LEDS_RANDOM_V4";
+static const char eye_leds_build_tag[] __attribute__((used)) = "BATOID_EYE_LEDS_WINK_V5";
 
 static uint8_t current_wpm;
 static int pressed_keys;
@@ -82,9 +90,12 @@ static void set_eyes(bool left_on, bool right_on);
 
 /* --- idle blink scheduler ------------------------------------------------ */
 enum blink_phase {
-    BLINK_IDLE, /* waiting for the next (random) blink */
-    BLINK_ON,   /* eyes lit */
-    BLINK_OFF,  /* short gap between two blinks of one burst */
+    BLINK_IDLE,  /* waiting for the next (random) animation */
+    BLINK_ON,    /* ordinary blink: both eyes lit */
+    BLINK_OFF,   /* ordinary blink: gap between two blinks of one burst */
+    WINK_BOTH,   /* wink step 1: both eyes lit */
+    WINK_HALF,   /* wink step 2: one eye closed */
+    WINK_BACK,   /* wink step 3: closed eye reopens, both lit */
 };
 
 static enum blink_phase blink_phase = BLINK_IDLE;
@@ -93,6 +104,11 @@ static int32_t blink_wait_ms;
 static int32_t blink_on_ms;
 static int32_t blink_gap_ms;
 static int blink_remaining;
+
+static bool wink_close_left; /* which eye closes during a wink */
+static int32_t wink_both_ms;
+static int32_t wink_half_ms;
+static int32_t wink_back_ms;
 
 static void blink_reset(int64_t now)
 {
@@ -106,12 +122,27 @@ static void blink_reset(int64_t now)
                         : rand_range(BLINK_WAIT_MIN, BLINK_WAIT_MAX);
 }
 
+static void start_wink(int64_t now)
+{
+    wink_close_left = (blink_rand() & 1) != 0;
+    wink_both_ms = rand_range(WINK_BOTH_MIN, WINK_BOTH_MAX);
+    wink_half_ms = rand_range(WINK_HALF_MIN, WINK_HALF_MAX);
+    wink_back_ms = rand_range(WINK_BACK_MIN, WINK_BACK_MAX);
+    blink_clock = now;
+    blink_phase = WINK_BOTH;
+}
+
 static void blink_tick(int64_t now)
 {
     switch (blink_phase) {
     case BLINK_IDLE:
         set_eyes(false, false);
         if (now - blink_clock >= blink_wait_ms) {
+            /* ~30% of idle animations are a wink, the rest ordinary blinks. */
+            if (blink_rand() % 100 < 30) {
+                start_wink(now);
+                break;
+            }
             /* 1 blink ~60%, 2 blinks ~30%, 3 blinks ~10%. */
             uint32_t r = blink_rand() % 10;
             blink_remaining = (r < 6) ? 1 : (r < 9) ? 2 : 3;
@@ -136,13 +167,37 @@ static void blink_tick(int64_t now)
             blink_clock = now;
             blink_remaining--;
             if (blink_remaining > 0) {
-                /* Each blink of a burst gets its own on-time / gap. */
+                /* Each blink of a burst gets its own timing. */
                 blink_on_ms = rand_range(BLINK_ON_MIN, BLINK_ON_MAX);
                 blink_gap_ms = rand_range(BLINK_GAP_MIN, BLINK_GAP_MAX);
                 blink_phase = BLINK_ON;
             } else {
                 blink_reset(now);
             }
+        }
+        break;
+
+    case WINK_BOTH:
+        set_eyes(true, true);
+        if (now - blink_clock >= wink_both_ms) {
+            blink_clock = now;
+            blink_phase = WINK_HALF;
+        }
+        break;
+
+    case WINK_HALF:
+        /* One eye stays lit while the other closes for a moment. */
+        set_eyes(!wink_close_left, wink_close_left);
+        if (now - blink_clock >= wink_half_ms) {
+            blink_clock = now;
+            blink_phase = WINK_BACK;
+        }
+        break;
+
+    case WINK_BACK:
+        set_eyes(true, true);
+        if (now - blink_clock >= wink_back_ms) {
+            blink_reset(now);
         }
         break;
     }
