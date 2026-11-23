@@ -12,6 +12,9 @@
  * There is deliberately NO caps-lock / connection-status display here, to
  * match the original QMK behavior.
  *
+ * Connection gate: when neither USB nor BLE is connected, both eyes stay dark.
+ * All light output goes through set_eyes(), so the gate is applied there.
+ *
  * GPIOs are GPIO_ACTIVE_LOW (see overlay); gpio_pin_set_dt(...,1) = LED on.
  */
 
@@ -21,6 +24,7 @@
 #include <zmk/event_manager.h>
 #include <zmk/events/position_state_changed.h>
 #include <zmk/events/wpm_state_changed.h>
+#include <zmk/endpoints.h>
 
 #define LED_L_NODE DT_NODELABEL(caps_lock_led)
 #define LED_R_NODE DT_NODELABEL(bt_status_led)
@@ -37,7 +41,7 @@ static const struct gpio_dt_spec led_r = GPIO_DT_SPEC_GET(LED_R_NODE, gpios);
 #define TURBO_FRAME_MAX 6
 
 /* Build marker, forced into .rodata so the final binary can be verified. */
-static const char eye_leds_build_tag[] __attribute__((used)) = "BATOID_EYE_LEDS_QMK_V2";
+static const char eye_leds_build_tag[] __attribute__((used)) = "BATOID_EYE_LEDS_QMK_V3";
 
 static uint8_t current_wpm;
 static int pressed_keys;
@@ -56,6 +60,11 @@ static int active_eye; /* 0 = left eye, 1 = right eye */
 
 static void set_eyes(bool left_on, bool right_on)
 {
+    /* No USB/BLE connection -> both eyes stay dark. */
+    if (!zmk_endpoint_is_connected()) {
+        left_on = false;
+        right_on = false;
+    }
     gpio_pin_set_dt(&led_l, left_on ? 1 : 0);
     gpio_pin_set_dt(&led_r, right_on ? 1 : 0);
 }
