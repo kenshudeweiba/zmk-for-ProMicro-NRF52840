@@ -29,6 +29,10 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(eye_leds, CONFIG_LOG_DEFAULT_LEVEL);
 
+/* Build marker: forced into .rodata via a volatile reference in init(),
+ * so we can prove this module is linked by searching the final binary. */
+static const char eye_leds_build_tag[] __attribute__((used)) = "BATOID_EYE_LEDS_V1";
+
 /* The two physical LEDs, declared as gpio-leds children in the overlay. */
 #define LED_L_NODE DT_NODELABEL(caps_lock_led)
 #define LED_R_NODE DT_NODELABEL(bt_status_led)
@@ -113,6 +117,9 @@ ZMK_SUBSCRIPTION(eye_led, zmk_position_state_changed);
 ZMK_SUBSCRIPTION(eye_led, zmk_wpm_state_changed);
 
 static int eye_led_init(void) {
+    volatile const char *tag = eye_leds_build_tag;  /* keep marker in binary */
+    (void)tag;
+
     if (!device_is_ready(led_l.port) || !device_is_ready(led_r.port)) {
         LOG_ERR("eye LED GPIO port not ready");
         return -ENODEV;
