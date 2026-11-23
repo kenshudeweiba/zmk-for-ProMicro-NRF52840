@@ -1,16 +1,15 @@
 /*
- * Batoid "eye" LEDs for ZMK - faithful port of the original QMK firmware
+ * Batoid "eye" LEDs for ZMK - based on the original QMK firmware
  * (firmware/kotte/batoid/keymaps/default/keymap.c).
  *
- * Three modes, exactly like the original:
+ * Three modes:
  *  - Standard (while typing): mirrored - right-hand keys light the LEFT eye,
  *    left-hand keys light the RIGHT eye. Keys released -> both off.
  *  - Turbo (WPM >= 70): left/right eyes alternate every 100 ms, 6-frame loop.
- *  - Idle (1 s after the last key): both eyes off, except a blink at idle
- *    frames 21, 51 and 53 of a 300-frame loop at 80 ms/frame (~24 s).
- *
- * There is deliberately NO caps-lock / connection-status display here, to
- * match the original QMK behavior.
+ *  - Idle (1 s after the last key): both eyes off, with an IRREGULAR blink:
+ *    random wait (1.2-8 s, occasionally 9-18 s), then 1-3 quick blinks with
+ *    a random on-time (70-110 ms) and random gap (80-200 ms). No fixed
+ *    schedule and no repeating 24 s loop.
  *
  * Connection gate: when neither USB nor BLE is connected, both eyes stay dark.
  * All light output goes through set_eyes(), so the gate is applied there.
@@ -35,13 +34,20 @@ static const struct gpio_dt_spec led_r = GPIO_DT_SPEC_GET(LED_R_NODE, gpios);
 #define TURBO_WPM       70
 #define IDLE_MS         1000
 #define TICK_MS         10
-#define IDLE_FRAME_MS   80
 #define TURBO_FRAME_MS  100
-#define IDLE_FRAME_MAX  300
 #define TURBO_FRAME_MAX 6
 
+#define BLINK_WAIT_MIN  1200
+#define BLINK_WAIT_MAX  8000
+#define BLINK_LONG_MIN  9000
+#define BLINK_LONG_MAX  18000
+#define BLINK_ON_MIN    70
+#define BLINK_ON_MAX    110
+#define BLINK_GAP_MIN   80
+#define BLINK_GAP_MAX   200
+
 /* Build marker, forced into .rodata so the final binary can be verified. */
-static const char eye_leds_build_tag[] __attribute__((used)) = "BATOID_EYE_LEDS_QMK_V3";
+static const char eye_leds_build_tag[] __attribute__((used)) = "BATOID_EYE_LEDS_RANDOM_V4";
 
 static uint8_t current_wpm;
 static int pressed_keys;
@@ -49,14 +55,98 @@ static bool standard_mode = true;
 static bool turbo_playing;
 static bool idle_playing = true;
 
-static int idle_frame;
 static int turbo_frame;
-static int64_t idle_frame_ms;
 static int64_t turbo_frame_ms;
 static int64_t idle_start_at;
 static bool idle_pending;
 
 static int active_eye; /* 0 = left eye, 1 = right eye */
+
+/* --- tiny xorshift32 PRNG, seeded from the boot cycle counter ------------ */
+static uint32_t rng_state;
+
+static uint32_t blink_rand(void)
+{
+    rng_state ^= rng_state << 13;
+    rng_state ^= rng_state >> 17;
+    rng_state ^= rng_state << 5;
+    return rng_state;
+}
+
+static int32_t rand_range(int32_t lo, int32_t hi)
+{
+    return lo + (int32_t)(blink_rand() % (uint32_t)(hi - lo + 1));
+}
+
+static void set_eyes(bool left_on, bool right_on);
+
+/* --- idle blink scheduler ------------------------------------------------ */
+enum blink_phase {
+    BLINK_IDLE, /* waiting for the next (random) blink */
+    BLINK_ON,   /* eyes lit */
+    BLINK_OFF,  /* short gap between two blinks of one burst */
+};
+
+static enum blink_phase blink_phase = BLINK_IDLE;
+static int64_t blink_clock;
+static int32_t blink_wait_ms;
+static int32_t blink_on_ms;
+static int32_t blink_gap_ms;
+static int blink_remaining;
+
+static void blink_reset(int64_t now)
+{
+    blink_phase = BLINK_IDLE;
+    blink_clock = now;
+    blink_remaining = 0;
+
+    /* Roughly 15% of the pauses are much longer, so the rhythm feels natural. */
+    blink_wait_ms = (blink_rand() % 100 < 15)
+                        ? rand_range(BLINK_LONG_MIN, BLINK_LONG_MAX)
+                        : rand_range(BLINK_WAIT_MIN, BLINK_WAIT_MAX);
+}
+
+static void blink_tick(int64_t now)
+{
+    switch (blink_phase) {
+    case BLINK_IDLE:
+        set_eyes(false, false);
+        if (now - blink_clock >= blink_wait_ms) {
+            /* 1 blink ~60%, 2 blinks ~30%, 3 blinks ~10%. */
+            uint32_t r = blink_rand() % 10;
+            blink_remaining = (r < 6) ? 1 : (r < 9) ? 2 : 3;
+            blink_on_ms = rand_range(BLINK_ON_MIN, BLINK_ON_MAX);
+            blink_gap_ms = rand_range(BLINK_GAP_MIN, BLINK_GAP_MAX);
+            blink_clock = now;
+            blink_phase = BLINK_ON;
+        }
+        break;
+
+    case BLINK_ON:
+        set_eyes(true, true);
+        if (now - blink_clock >= blink_on_ms) {
+            blink_clock = now;
+            blink_phase = BLINK_OFF;
+        }
+        break;
+
+    case BLINK_OFF:
+        set_eyes(false, false);
+        if (now - blink_clock >= blink_gap_ms) {
+            blink_clock = now;
+            blink_remaining--;
+            if (blink_remaining > 0) {
+                /* Each blink of a burst gets its own on-time / gap. */
+                blink_on_ms = rand_range(BLINK_ON_MIN, BLINK_ON_MAX);
+                blink_gap_ms = rand_range(BLINK_GAP_MIN, BLINK_GAP_MAX);
+                blink_phase = BLINK_ON;
+            } else {
+                blink_reset(now);
+            }
+        }
+        break;
+    }
+}
 
 static void set_eyes(bool left_on, bool right_on)
 {
@@ -76,6 +166,8 @@ static void eye_led_tick(struct k_timer *timer)
     if (idle_pending && now >= idle_start_at) {
         idle_playing = true;
         idle_pending = false;
+        turbo_playing = false;
+        blink_reset(now);
     }
 
     if (turbo_playing) {
@@ -102,15 +194,7 @@ static void eye_led_tick(struct k_timer *timer)
 
     if (idle_playing) {
         standard_mode = false;
-        turbo_playing = false;
-        if (now - idle_frame_ms >= IDLE_FRAME_MS) {
-            idle_frame_ms = now;
-            idle_frame = (idle_frame >= IDLE_FRAME_MAX) ? 1 : idle_frame + 1;
-        }
-        set_eyes(false, false);
-        if (idle_frame == 21 || idle_frame == 51 || idle_frame == 53) {
-            set_eyes(true, true);
-        }
+        blink_tick(now);
     }
 
     if (standard_mode) {
@@ -131,6 +215,8 @@ static int eye_led_listener(const zmk_event_t *eh)
         if (pos->state) {
             idle_playing = false;
             standard_mode = true;
+            /* Mix key timing into the PRNG so successive idle bursts differ. */
+            rng_state ^= (uint32_t)k_uptime_get() * 2654435761u;
             uint32_t col = pos->position % 12;
             active_eye = (col > 5) ? 0 : 1; /* right hand -> left eye */
         }
@@ -155,6 +241,9 @@ static int eye_led_listener(const zmk_event_t *eh)
             turbo_playing = true;
             standard_mode = false;
             idle_playing = false;
+        } else {
+            /* Let the eyes fall back to typing-mirror / idle blinking. */
+            turbo_playing = false;
         }
         return ZMK_EV_EVENT_BUBBLE;
     }
@@ -177,10 +266,16 @@ static int eye_led_init(void)
     gpio_pin_configure_dt(&led_l, GPIO_OUTPUT_INACTIVE);
     gpio_pin_configure_dt(&led_r, GPIO_OUTPUT_INACTIVE);
 
-    idle_frame_ms = k_uptime_get();
-    turbo_frame_ms = idle_frame_ms;
+    rng_state = k_cycle_get_32() ^ 0x9E3779B9u;
+    if (rng_state == 0) {
+        rng_state = 0x12345678u;
+    }
+    blink_rand(); /* discard the first, weakest xorshift output */
+
+    turbo_frame_ms = k_uptime_get();
     standard_mode = true;
     idle_playing = true;
+    blink_reset(k_uptime_get());
     set_eyes(false, false);
 
     k_timer_start(&eye_led_timer, K_MSEC(TICK_MS), K_MSEC(TICK_MS));
