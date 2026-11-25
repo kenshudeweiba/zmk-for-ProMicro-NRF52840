@@ -1,6 +1,7 @@
 #include <dt-bindings/zmk/keys.h>
 #include <dt-bindings/zmk/bt.h>
 #include <dt-bindings/zmk/outputs.h>
+#include <dt-bindings/zmk/pointing.h>
 #include <behaviors.dtsi>
 
 / {
@@ -42,8 +43,21 @@
             >;
         };
 
-        // Layers 3-11: reserved for ZMK Studio to configure (mouse keys, etc.)
-        layer_3 { status = "reserved"; display-name = "Layer 4"; };
+        // Layer 3: mouse keys. Parameters are baked in here because ZMK Studio
+        // does not expose parameter metadata for &mmv / &msc behaviors.
+        // Row 0: t=left click, y=scroll up, i=move up
+        // Row 1: g=right click, h=scroll down, j=left, k=down, l=right
+        layer_3 {
+            display-name = "Mouse";
+            bindings = <
+                &trans &trans &trans &trans &trans &mkp LCLK &msc SCRL_UP &trans &mmv MOVE_UP &trans &trans &trans
+                &trans &trans &trans &trans &trans &mkp RCLK &msc SCRL_DOWN &mmv MOVE_LEFT &mmv MOVE_DOWN &mmv MOVE_RIGHT &trans &trans
+                &trans &trans &trans &trans &trans &trans &trans &trans &trans &trans &trans &trans
+                &trans &trans &trans &none &trans &none &trans &trans &none &none &none &trans
+            >;
+        };
+
+        // Layers 4-11: reserved for ZMK Studio to configure
         layer_4 { status = "reserved"; display-name = "Layer 5"; };
         layer_5 { status = "reserved"; display-name = "Layer 6"; };
         layer_6 { status = "reserved"; display-name = "Layer 7"; };
