@@ -15,3 +15,14 @@ include:
     snippet: studio-rpc-usb-uart
     cmake-args: -DCONFIG_ZMK_STUDIO=y
     artifact-name: my48-nice_nano-sd
+  # Settings reset tool firmware: erases the whole settings/NVS partition on
+  # boot (BLE pairing + ZMK Studio custom keymaps + all settings), then stays
+  # in reset state. Flash it, let it erase once, then flash the normal firmware
+  # back. Partition layout must match the matching daily firmware.
+  - board: nice_nano
+    shield: settings_reset
+    snippet: nrf52840-nosd
+    artifact-name: settings_reset-nice_nano-nosd
+  - board: nice_nano
+    shield: settings_reset
+    artifact-name: settings_reset-nice_nano-sd
