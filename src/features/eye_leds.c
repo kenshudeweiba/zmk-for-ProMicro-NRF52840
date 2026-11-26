@@ -27,6 +27,12 @@
 #include <zmk/events/wpm_state_changed.h>
 #include <zmk/endpoints.h>
 
+/* The eye LEDs are physical GPIOs defined only in the my48 shield overlay.
+ * Other shields built from this config (e.g. the settings_reset tool) do not
+ * have these nodes, so guard the whole implementation to avoid referencing
+ * undefined devicetree ordinals at compile time. */
+#if DT_NODE_EXISTS(DT_NODELABEL(caps_lock_led)) && DT_NODE_EXISTS(DT_NODELABEL(bt_status_led))
+
 #define LED_L_NODE DT_NODELABEL(caps_lock_led)
 #define LED_R_NODE DT_NODELABEL(bt_status_led)
 
@@ -341,3 +347,5 @@ static int eye_led_init(void)
 }
 
 SYS_INIT(eye_led_init, APPLICATION, 90);
+
+#endif /* eye LED nodes present */
