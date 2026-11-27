@@ -20,6 +20,12 @@ jobs:
           merge-multiple: true
       - name: List firmware files
         run: find firmware -type f -printf '%P  %s bytes\n'
+      - name: Remove stale settings_reset assets from main Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete asset zmk-studio-firmware settings_reset-nice_nano-nosd.uf2 --yes --repo "$GITHUB_REPOSITORY" || true
+          gh release delete asset zmk-studio-firmware settings_reset-nice_nano-sd.uf2 --yes --repo "$GITHUB_REPOSITORY" || true
       - name: Publish / update Release
         uses: softprops/action-gh-release@v2
         with:
