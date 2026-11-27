@@ -20,7 +20,7 @@ jobs:
           merge-multiple: true
       - name: List firmware files
         run: find firmware -type f -printf '%P  %s bytes\n'
-      - name: Publish / update Release
+      - name: Publish / update main Release (daily firmware only)
         uses: softprops/action-gh-release@v2
         with:
           tag_name: zmk-studio-firmware
@@ -28,6 +28,20 @@ jobs:
           body: |
             Auto-built from branch `zmk-studio`.
 
-            - `*-nosd.uf2`: app@0x1000, NO SoftDevice. For Daxiong NICE NANO / boards reporting "SoftDevice: not found". **Use this one for the NoSD board.**
+            - `*-nosd.uf2`: app@0x1000, NO SoftDevice, USB-only (no Bluetooth). For boards reporting "SoftDevice: not found".
             - `*-sd.uf2`: app@0x26000, requires S140 SoftDevice (nice!nano v1 / most Pro Micro clones).
-          files: firmware/**/*
+
+            Settings-reset tools are in a SEPARATE release `zmk-studio-tools` - do NOT flash them as daily firmware.
+          files: firmware/my48-*.uf2
+      - name: Publish / update tools Release (NOT daily firmware)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: zmk-studio-tools
+          name: ZMK Studio maintenance tools - DO NOT flash as daily firmware
+          body: |
+            These erase ALL settings on boot: BLE bonds, ZMK Studio keymap, everything.
+            Flash one, let it erase once, then immediately flash your normal firmware back.
+
+            - `settings_reset-nice_nano-nosd.uf2`: for the NoSD partition layout.
+            - `settings_reset-nice_nano-sd.uf2`: for the SD partition layout.
+          files: firmware/settings_reset-*.uf2
