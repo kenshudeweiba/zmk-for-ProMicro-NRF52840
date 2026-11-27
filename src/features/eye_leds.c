@@ -6,7 +6,7 @@
  *
  * Modes:
  *  - Standard (while typing): mirrored - right-hand keys light the LEFT eye,
- *    left-hand keys light the RIGHT eye. Keys released -> both off.
+ *    left-hand keys light the RIGHT eye. Keys released -> both eyes open.
  *  - Turbo (WPM >= 70): left/right eyes alternate every 100 ms, 6-frame loop.
  *  - Idle (1 s after the last key): both eyes stay ON (open), occasionally
  *    BLINK = both eyes off briefly, or WINK = one eye off briefly. Timing is
@@ -57,7 +57,7 @@ static const struct gpio_dt_spec led_r = GPIO_DT_SPEC_GET(LED_R_NODE, gpios);
 #define WINK_BACK_MAX   180
 
 /* Build marker, forced into .rodata so the final binary can be verified. */
-static const char eye_leds_build_tag[] __attribute__((used)) = "BATOID_EYE_LEDS_OPEN_V6";
+static const char eye_leds_build_tag[] __attribute__((used)) = "BATOID_EYE_LEDS_OPEN_V7";
 
 static uint8_t current_wpm;
 static int pressed_keys;
@@ -89,6 +89,16 @@ static int32_t rand_range(int32_t lo, int32_t hi)
 }
 
 static void set_eyes(bool left_on, bool right_on);
+static void blink_reset(int64_t now);
+
+static void enter_idle(int64_t now)
+{
+    idle_playing = true;
+    idle_pending = false;
+    turbo_playing = false;
+    standard_mode = false;
+    blink_reset(now);
+}
 
 /* --- idle blink scheduler ------------------------------------------------ */
 enum blink_phase {
@@ -221,11 +231,19 @@ static void eye_led_tick(struct k_timer *timer)
 {
     int64_t now = k_uptime_get();
 
-    if (idle_pending && now >= idle_start_at) {
-        idle_playing = true;
-        idle_pending = false;
-        turbo_playing = false;
-        blink_reset(now);
+    /* Only go idle once every key is released; holding a key must keep the
+     * mirrored typing state even if the previous idle timer has elapsed. */
+    if (idle_pending && pressed_keys == 0 && now >= idle_start_at) {
+        enter_idle(now);
+    }
+    /* If no mode is driving the eyes (e.g. turbo just ended), fall back to
+     * typing-mirror or idle so the eyes never get stuck dark. */
+    if (!turbo_playing && !idle_playing && !standard_mode) {
+        if (pressed_keys > 0) {
+            standard_mode = true;
+        } else {
+            enter_idle(now);
+        }
     }
 
     if (turbo_playing) {
@@ -259,7 +277,9 @@ static void eye_led_tick(struct k_timer *timer)
         if (pressed_keys > 0) {
             set_eyes(active_eye == 0, active_eye == 1);
         } else {
-            set_eyes(false, false);
+            /* Keys just released but the idle animation has not started yet:
+             * both eyes must be OPEN, never a dark gap. */
+            set_eyes(true, true);
         }
     }
 }
