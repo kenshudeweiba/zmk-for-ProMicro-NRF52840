@@ -93,14 +93,14 @@
       , <&key_physical_attrs  150  100   100  300    800   175  350> // 3,0
       , <&key_physical_attrs  100  100   200  210    800   250  260> // 3,1 -> LBRC sits to the left of Z
       , <&key_physical_attrs  125  100   425  319    800   487  369> // 3,2
-      , <&key_physical_attrs  125  100   425  329    800   487  379> // 3,3 ghost
+      , <&key_physical_attrs    1    1 (-1000) (-1000)    0 (-1000) (-1000)> // 3,3 ghost (unused matrix slot, hidden)
       , <&key_physical_attrs  200  100   550  338    800   650  388> // 3,4
-      , <&key_physical_attrs  200  100   550  348    800   650  398> // 3,5 ghost
+      , <&key_physical_attrs    1    1 (-1000) (-1000)    0 (-1000) (-1000)> // 3,5 ghost (unused matrix slot, hidden)
       , <&key_physical_attrs  225  100   825  348 (-800)   937  398> // 3,6
       , <&key_physical_attrs  100  100  1050  338 (-800)  1100  388> // 3,7
-      , <&key_physical_attrs  100  100  1050  329 (-800)  1100  379> // 3,8 ghost
-      , <&key_physical_attrs  100  100  1050  319 (-800)  1100  369> // 3,9 ghost
-      , <&key_physical_attrs  100  100  1050  310 (-800)  1100  360> // 3,10 ghost
+      , <&key_physical_attrs    1    1 (-1000) (-1000)    0 (-1000) (-1000)> // 3,8 ghost (unused matrix slot, hidden)
+      , <&key_physical_attrs    1    1 (-1000) (-1000)    0 (-1000) (-1000)> // 3,9 ghost (unused matrix slot, hidden)
+      , <&key_physical_attrs    1    1 (-1000) (-1000)    0 (-1000) (-1000)> // 3,10 ghost (unused matrix slot, hidden)
       , <&key_physical_attrs  150  100  1300  300 (-800)  1375  350> // 3,11
         ;
     };
